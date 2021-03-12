@@ -2,138 +2,180 @@ import pyodbc
 import os
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, LSTM
 import datetime as dt
 import matplotlib.pyplot as plt
 from operator import itemgetter
+import pandas_datareader as web
+import pandas as pd
+import urllib.request, json
+import tensorflow as tf
 
+"""
+    Obtain data
+    ----------------------------------------------------------------
+"""
 conn = conn = eval(os.environ.get('MALACHI_SERVER'))
 
 cursor = conn.cursor()
 cursor.execute('SELECT [DailyId], [High], [Low], [Date], [Close] FROM Stonks.dbo.[AAPL_Daily]')
 
-dic = {}
 l = []
+
+query_results = []
 count = 0
 for row in cursor:
     tup = tuple(row)
-    # print(tup)
-    l.append(tup)
+    query_results.append(tup)
     count += 1
 
-l = sorted(l, key=itemgetter(0))
+# Sort the results by date
+query_results = sorted(query_results, key=itemgetter(0))
 
-mids = []
-dates = []
-closes = []
-for index, high, low, date, close in l:
-    dates.append(date)
-    mids.append((high + low) / 2.0)
-    closes.append(close)
-    # print(index, (high + low) / 2.0)
+# Store data to DataFrame
+data = pd.DataFrame(query_results, columns=['DailyId', 'High', 'Low', 'Date', 'Close'])
+# print(data)
+
+"""
+    Obtain data
+    ----------------------------------------------------------------
+"""
+
+"""
+    Train data and scale
+    ----------------------------------------------------------------
+"""
+
+# Establish train data
+split = 400
+train_data = data['Close'][:split].values.reshape(-1,1)
 
 
+# Scale data
+scaler =  MinMaxScaler(feature_range=(0, 1))
+scaled_data = scaler.fit_transform(train_data)
 
-mid = np.array(mids)
-# print(mid)
+prediction_days = 60 # How many days to reference for a single prediction
 
-plt.figure(figsize = (18,9))
-plt.plot(mid)
-# plt.xticks(range(0,count,500),df['Date'].loc[::500],rotation=45)
-plt.xlabel('Date',fontsize=18)
-plt.ylabel('Mid Price',fontsize=18)
-plt.show()
+x_train = []
+y_train = []
 
-number = 400
-train_data = mid[:number]
-test_data = mid[number:]
+for x in range(prediction_days, len(scaled_data)):
+    x_train.append(scaled_data[x-prediction_days:x, 0])
+    y_train.append(scaled_data[x, 0])
 
-scaler = MinMaxScaler()
-train_data = train_data.reshape(-1,1)
-test_data = test_data.reshape(-1,1)
-# Train the Scaler with training data and smooth data
-smoothing_window_size = 50
-for di in range(0,number-100,smoothing_window_size):
-    scaler.fit(train_data[di:di+smoothing_window_size,:])
-    train_data[di:di+smoothing_window_size,:] = scaler.transform(train_data[di:di+smoothing_window_size,:])
+x_train, y_train = np.array(x_train), np.array(y_train)
+x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
 
-# You normalize the last bit of remaining data
-scaler.fit(train_data[di+smoothing_window_size:,:])
-train_data[di+smoothing_window_size:,:] = scaler.transform(train_data[di+smoothing_window_size:,:])
+"""
+    Train data and scale
+    ----------------------------------------------------------------
+"""
 
-# Reshape both train and test data
-train_data = train_data.reshape(-1)
+"""
+    Create and train model
+    ----------------------------------------------------------------
+"""
 
-# Normalize test data
-test_data = scaler.transform(test_data).reshape(-1)
+# Build the model
+model = Sequential()
 
-# Now perform exponential moving average smoothing
-# So the data will have a smoother curve than the original ragged data
-EMA = 0.0
-gamma = 0.1
-for ti in range(10):
-  EMA = gamma*train_data[ti] + (1-gamma)*EMA
-  train_data[ti] = EMA
+model.add(LSTM(units=55, return_sequences=True, input_shape=(x_train.shape[1], 1)))
+model.add(Dropout(0.2))
+model.add(LSTM(units=55, return_sequences=True))
+model.add(Dropout(0.2))
+model.add(LSTM(units=55))
+model.add(Dropout(0.2))
+model.add(Dense(units=5)) # prediction of the next closing
 
-# Used for visualization and test purposes
-all_mid_data = np.concatenate([train_data,test_data],axis=0)
+model.compile(optimizer='adam', loss='mean_squared_error')
+model.fit(x_train, y_train, epochs=50, batch_size=32)
 
-# print(all_mid_data)
+"""
+    Create and train model
+    ----------------------------------------------------------------
+"""
 
-window_size = 5
-N = train_data.size
-std_avg_predictions = []
-std_avg_x = []
-mse_errors = []
-print(N)
-for pred_idx in range(window_size,N):
 
-    if pred_idx >= N:
-        date = dt.datetime.strptime(k, '%Y-%m-%d').date() + dt.timedelta(days=1)
-    else:
-        date = dates[pred_idx]
+""" 
+    Test the model accuracy on test data 
+    ----------------------------------------------------------------
+"""
 
-    std_avg_predictions.append(np.mean(train_data[pred_idx-window_size:pred_idx]))
-    mse_errors.append((std_avg_predictions[-1]-train_data[pred_idx])**2)
-    std_avg_x.append(date)
+# Load Test Data
+test_data = data['Close'][split:]
+actual_prices = test_data.values
 
-print('MSE error for standard averaging: %.5f'%(0.5*np.mean(mse_errors)))
-# print(N)
-# plt.figure(figsize = (18,9))
-# plt.plot(range(count), all_mid_data,color='b',label='True')
-# plt.plot(range(window_size,N),std_avg_predictions,color='orange',label='Prediction')
-# #plt.xticks(range(0,df.shape[0],50),df['Date'].loc[::50],rotation=45)
-# plt.xlabel('Date')
-# plt.ylabel('Mid Price')
-# plt.legend(fontsize=18)
-# plt.show()
+total_dataset = pd.concat((data['Close'][:split], test_data), axis=0)
 
-window_size = 1
-N = train_data.size
+# model_inputs is a 2D list with an index of 0
+model_inputs = total_dataset[len(total_dataset) - len(test_data) - prediction_days:]
+# Convert this so that user can input how many days into the future they wanna look
+# model_inputs.loc[len(model_inputs.index)] = 0
+# model_inputs.loc[len(model_inputs.index)] = 0
+# model_inputs.loc[len(model_inputs.index)] = 0
+model_inputs = model_inputs.values
+model_inputs = model_inputs.reshape(-1, 1)
+model_inputs = scaler.transform(model_inputs)
 
-run_avg_predictions = []
-run_avg_x = []
+# Make predictions on test data
+x_test = []
+count = 0
+l = len(model_inputs)
 
-mse_errors = []
+for x in range(prediction_days, l + 1):
+    # [..., 0] returns the splice in the first index (0)
+    # since model_inputs is a 2D array with index 0
+    # appends prediction days values and creates 
+    # len(total_dataset) + 1 - split rows
 
-running_mean = 0.0
-run_avg_predictions.append(running_mean)
+    if model_inputs[x-prediction_days:x, 0][-1] < 0 :
+        real_data = [model_inputs[len(model_inputs) + 1 - prediction_days:len(model_inputs + 1), 0]]
+        real_data = np.array(real_data)
+        real_data = np.reshape(real_data, (real_data.shape[0], real_data.shape[1], 1))
 
-decay = 0.001
+        prediction = model.predict(real_data)
+        prediction = prediction.tolist()
 
-for pred_idx in range(1,N):
+        # print('here\n')    
+        # print(len(model_inputs[x-prediction_days:x, 0]))
+        # print(model_inputs[x-prediction_days:x, 0])
+        model_inputs[x-prediction_days:x, 0].put(59, [prediction])
+        # print(len(model_inputs[x-prediction_days:x, 0]))
+        # print(model_inputs[x-prediction_days:x, 0])
+        # print('done here\n')
 
-    running_mean = running_mean*decay + (1.0-decay)*train_data[pred_idx-1]
-    run_avg_predictions.append(running_mean)
-    mse_errors.append((run_avg_predictions[-1]-train_data[pred_idx])**2)
-    run_avg_x.append(date)
+    x_test.append(model_inputs[x-prediction_days:x, 0]) 
 
-print('MSE error for EMA averaging: %.5f'%(0.5*np.mean(mse_errors)))
+    # print(len(x_test[-1]))
+    # print(x_test[-1], count, type(model_inputs[x-prediction_days:x, 0]))
+    count += 1
 
-plt.figure(figsize = (18,9))
-plt.plot(range(count),all_mid_data,color='b',label='True')
-plt.plot(range(0,N),run_avg_predictions,color='orange', label='Prediction')
-#plt.xticks(range(0,df.shape[0],50),df['Date'].loc[::50],rotation=45)
+x_test = np.array(x_test)
+x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1)) # (test_data length + 1, prediction days, 1)
+
+predicted_prices = model.predict(x_test)
+predicted_prices = scaler.inverse_transform(predicted_prices)
+
+# Predict next day
+# Convert this to show the closing prices for the amount of days 
+# the user chose to look ahead
+real_data = [model_inputs[len(model_inputs) + 1 - prediction_days:len(model_inputs + 1), 0]]
+real_data = np.array(real_data)
+real_data = np.reshape(real_data, (real_data.shape[0], real_data.shape[1], 1))
+
+prediction = model.predict(real_data)
+prediction = scaler.inverse_transform(prediction)
+print("Prediction: {}".format(prediction))
+
+# Plot the test predictions
+plt.plot(actual_prices, color='black', label="Actual Apple price")
+plt.plot(predicted_prices, color='red', label="Predicted Apple price")
+plt.title("Apple Share Price")
 plt.xlabel('Date')
-plt.ylabel('Mid Price')
-plt.legend(fontsize=18)
+plt.ylabel('Apple Share price')
+plt.legend()
 plt.show()
+
+

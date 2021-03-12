@@ -13,7 +13,7 @@ from insert_db import InsertDB
 ##%%
 POLYGON_API_KEY = os.environ.get('POLYGON_API_KEY')
 START_DATE = '2020-03-08'
-END_DATE = '2021-03-08'
+END_DATE = '2021-03-11'
 # URL for all the tickers on Polygon
 POLYGON_TICKERS_URL = 'https://api.polygon.io/v2/reference/tickers?page={}&apiKey={}'
 # URL for pricing data
@@ -456,13 +456,13 @@ adj_bars('data/bars_adj')
 
 
 ##%%
-# bars = pd.read_csv('..\\data\\bars_adj\\AAPL.csv') # USE FOR JUPYTER
-# bars2 = pd.read_csv('..\\data\\bars\\AAPL.csv') # USE FOR JUPYTER
-bars = pd.read_csv('data/bars_adj/AAPL.csv')
-bars2 = pd.read_csv('data/bars/AAPL.csv')
-# bars['close_adj'].plot()
-plt.plot(bars['close_adj'])
-plt.show()
+# # bars = pd.read_csv('..\\data\\bars_adj\\AAPL.csv') # USE FOR JUPYTER
+# # bars2 = pd.read_csv('..\\data\\bars\\AAPL.csv') # USE FOR JUPYTER
+# bars = pd.read_csv('data/bars_adj/AAPL.csv')
+# bars2 = pd.read_csv('data/bars/AAPL.csv')
+# # bars['close_adj'].plot()
+# plt.plot(bars['close_adj'])
+# plt.show()
 
 # df = pd.read_csv('data/bars_adj/AAPL.csv', index_col='date')
 # db_table = "[Stonks].[dbo].[AAPL_Daily]"
